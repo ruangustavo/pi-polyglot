@@ -1,0 +1,18 @@
+{
+  "name": "pi-polyglot",
+  "version": "0.0.0-prototype",
+  "private": true,
+  "type": "module",
+  "description": "Protótipo descartável de feedback de idiomas na TUI do Pi",
+  "keywords": ["pi-package"],
+  "scripts": {
+    "prototype": "pi --offline --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files -e ./prototypes/pi-polyglot-visual.ts"
+  },
+  "pi": {
+    "extensions": ["./.pi/extensions/polyglot-prototype.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
