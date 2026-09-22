@@ -1,18 +1,42 @@
 {
   "name": "pi-polyglot",
-  "version": "0.0.0-prototype",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "description": "Protótipo descartável de feedback de idiomas na TUI do Pi",
+  "description": "Isolated language feedback while you work in Pi",
   "keywords": ["pi-package"],
+  "author": "Ruan Gustavo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ruangustavo/pi-polyglot.git"
+  },
+  "homepage": "https://github.com/ruangustavo/pi-polyglot#readme",
+  "bugs": {
+    "url": "https://github.com/ruangustavo/pi-polyglot/issues"
+  },
+  "files": [
+    ".pi/extensions/polyglot.ts",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": { "node": ">=22.19.0" },
   "scripts": {
-    "prototype": "pi --offline --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files -e ./prototypes/pi-polyglot-visual.ts"
+    "dev": "pi -e ./.pi/extensions/polyglot.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
   },
-  "pi": {
-    "extensions": ["./.pi/extensions/polyglot-prototype.ts"]
-  },
+  "pi": { "extensions": ["./.pi/extensions/polyglot.ts"] },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-tui": "0.85.1",
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
   }
 }

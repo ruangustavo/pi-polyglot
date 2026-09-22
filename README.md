@@ -1,91 +1,122 @@
 # pi-polyglot
 
-Aprender um idioma enquanto trabalha com o Pi, sem transformar o chat de programação em uma aula.
+Learn a language while working with Pi. Get inline corrections and brief explanations below the composer, without interrupting your coding workflow or adding feedback to the coding agent's context.
 
-## Protótipo visual concluído — C4 escolhida
-
-**Decisão validada:** feedback abaixo do composer, com uma única frase marcada e uma dica curta abaixo. O texto não alterado aparece só uma vez; remoções são riscadas e adições sublinhadas. Não há seta, duas versões da frase ou etiqueta “polyglot · DEMO”.
-
-Cabeçalho aprovado: **`English · 1 change`** / **`English · N changes`**. O nome indica o idioma-alvo; `·` é o marcador. Uma substituição conta como uma alteração, não duas. Os exemplos fixos atuais têm uma alteração cada; a contagem de várias alterações será ligada ao resultado da revisão real.
-
-C4 é o padrão ao habilitar após iniciar/recarregar. As variantes C, C1, C2 e C3 permanecem disponíveis apenas como referências do experimento. Este passo ainda usa **exemplos fixos**, não corrige mensagens reais e não chama IA. `/polyglot next` permite comparar as opções na TUI real do Pi, sem capturar as setas do editor.
-
-### Experimentar
-
-Requer o Pi instalado no PATH (experimentado com 0.85.1). Não precisa de `npm install`:
-
-```sh
-npm run prototype
+```text
+English · 1 change
+Yesterday I have fixed the login bug.
+Fix: With “yesterday”, use the simple past.
 ```
 
-Dentro do Pi:
+In the terminal, `have ` is **struck through** to indicate its removal. Additions are **underlined**, using your theme's diff colors. Unchanged text appears only once. A replacement counts as one change, not two.
+
+**The interface is in English.** Review explanations follow your configured native language, which defaults to English.
+
+## Try it locally
+
+Requires Pi **0.85.1** (the tested version), with a model and authentication configured. You do not need to install the extension globally:
+
+```sh
+npm run dev
+```
+
+In the new session:
 
 ```text
 /polyglot on
-/polyglot c1
-/polyglot c2
-/polyglot c3
-/polyglot c4
-/polyglot c
-/polyglot lang ja
-/polyglot off
 ```
 
-Também é possível usar `/reload` numa sessão deste projeto para carregar `.pi/extensions/polyglot-prototype.ts`, desde que o projeto esteja confiado. Não há instalação global.
+Write normally in your target language. Your messages reach the coding agent unchanged and are reviewed automatically in parallel.
 
-| Comando | Efeito |
+For example, to practice Spanish with explanations in English:
+
+```text
+/polyglot lang es
+/polyglot native en
+/polyglot on
+```
+
+You can also use `/reload` in a session that trusts this project: `.pi/extensions/polyglot.ts` is discovered automatically. If you started a session with the old `npm run prototype`, exit and start a new one with `npm run dev`. Reloading does not replace the extension path passed on the command line.
+
+### Commands
+
+| Command | Effect |
 | --- | --- |
-| `/polyglot` | Liga/desliga; começa desligado, com C4 selecionada |
-| `/polyglot on` / `/polyglot off` | Habilita / remove widget e status |
-| `/polyglot c` | **Base anterior:** antes/depois em linhas separadas + dica |
-| `/polyglot c1` | **Inline:** alteração com seta dentro da frase + dica, sem cabeçalho |
-| `/polyglot c2` | **Colunas:** antes/depois lado a lado; empilha abaixo de 76 colunas |
-| `/polyglot c3` | **Didática:** frase corrigida primeiro, ajuste, explicação e padrão |
-| `/polyglot c4` | **Escolhida:** idioma + contagem, uma frase com alterações e dica |
-| `/polyglot next` | Alterna C → C1 → C2 → C3 → C4 → C |
-| `/polyglot lang en` / `es` / `ja` | Exemplo em inglês / espanhol / japonês |
-| `/polyglot help` | Ajuda |
+| `/polyglot` | Toggle on/off |
+| `/polyglot on` / `off` | Enable reviews / cancel the pending review and clear the UI |
+| `/polyglot lang en` | Set the target language; accepts codes such as `en-US`, `es`, `fr`, and `ja` |
+| `/polyglot native en` | Set the language used for explanations, independently of the target language |
+| `/polyglot model default` | Follow Pi's active model at the time of each submission |
+| `/polyglot model <provider>/<model-id>` | Use a model already configured in Pi without changing the coding model |
+| `/polyglot status` | Show preferences, model, and the latest review status or error |
 
-Escolher uma variante ou idioma também liga a demonstração. As explicações deste passo estão em português. Trechos removidos usam cor de remoção + riscado; novos trechos usam cor de adição + sublinhado. Em C4, o texto não alterado aparece apenas uma vez, sem seta ou linhas `−`/`+`; o riscado e o sublinhado distinguem as mudanças sem depender só da cor. A frase pode quebrar visualmente em terminal estreito, sem virar duas versões. A aparência exata depende do tema e do suporte do terminal a esses estilos.
+**Current defaults:** disabled, English as the target language, English for explanations, and Pi's active model. Preferences are **in memory only**. Reloading, restarting, or switching sessions restores these defaults. Setting a language or model does not enable reviews by itself.
 
-As variantes não exibem a etiqueta “polyglot · DEMO”. O rodapé identifica ligado, variante e nome, idioma-alvo, idioma da explicação e posição. Ao desligar, não sobra indicador. Recarregar, reiniciar ou trocar a sessão restaura o estado inicial desligado, com **C4 selecionada**. Alternar off/on sem recarregar mantém a variante escolhida.
+The UI language and the explanation language are separate. For example, `/polyglot native pt-BR` requests explanations in Brazilian Portuguese while commands, notifications, and errors remain in English. Changing the target language does not change the explanation language.
 
-### Limites intencionais
+## How it works
 
-- Somente comandos e widgets: nenhum hook de input, prompt, ferramenta ou mensagem adicionado ao contexto do modelo pela extensão.
-- Não lê histórico, arquivos, texto do composer ou credenciais.
-- Não reescreve o que você digita, substitui o editor, abre modais automaticamente ou registra atalhos.
-- Nenhum histórico de aprendizado ou preferência persistida; estado apenas em memória.
-- O Pi continua normal: **mensagens comuns ainda podem chamar seu modelo**. `--offline` desliga operações de rede na inicialização, não as chamadas do chat. Use os comandos `/polyglot` para avaliar sem chamadas de IA.
-- Somente TUI; nenhum componente em print/JSON/RPC.
-- Não há sessão de revisão ainda. Os exemplos em três idiomas não significam suporte de correção implementado.
+- The input hook immediately returns `continue`, without waiting for a review, changing text/images, or injecting messages. Pi's normal workflow continues.
+- Each review uses `ctx.modelRegistry.complete()` with **a fresh context**, one message, and dedicated review instructions. It reuses Pi's model and authentication resolution, not its conversation history.
+- The ephemeral review session is a single-turn request with a new identifier, discarded when it finishes. No coding `AgentSession`, subprocess, or JSONL session is created. We do not use `ctx.newSession()`.
+- No tools, skills, extensions, context files, or project history are loaded for the review. The extension does not read referenced files, previous messages, or drafts still being typed.
+- By default, the review uses the active model captured at submission. An optional model override affects only reviews; `model default` restores automatic model selection.
+- The model is instructed to review only the target language, correct errors, and suggest more natural wording without changing your intent. `Fix` labels corrections; `Suggestion (optional)` labels style suggestions. Explanations use your configured native language.
+- Edits must match exact, non-overlapping spans in the message. Invalid output never becomes a correction. Shared words are removed from returned edit pairs to avoid duplicating unchanged text.
+- Results appear only in the widget—**never** through `sendMessage`, `sendUserMessage`, the main system prompt, or coding-agent tools.
+- Feedback remains until your next submission, with no disappearance timer. A new submission clears the previous feedback and cancels the pending review. Stale responses cannot reappear, even if the provider ignores cancellation.
+- When there are no useful changes, nothing appears: no widget, success indicator, or “all good” message.
+- Disabling reviews, changing preferences, navigating the session tree, or shutting down/reloading cancels the review and clears the UI.
 
-### Encerramento do experimento
+## Current limits
 
-A escolha visual está fechada. O rodapé de comparação e os comandos das variantes são controles do protótipo, não decisões sobre a interface final.
+- **Up to 3 changes**, prioritizing errors, for messages of up to **4,000 characters**. Longer input is skipped to avoid duplicating the cost of large prompts. There is no batch analysis or accumulated queue.
+- A local **30-second deadline**, no extension retries, and a requested output limit of **1,800 tokens**. Provider cancellation is cooperative: work already processed may still be billed after cancellation.
+- The panel uses at most ten lines or roughly one-third of the terminal height. Long messages show excerpts around edits, with an indicator when feedback is shortened. There is no expanded view or modal.
+- Backtick/tilde code fences, inline code, indented lines, URLs, `@file` references, paths, and common identifiers are masked before submission. Images are not sent to the reviewer. This is not a code parser or general secret scrubber: unmarked code also depends on the model following its instructions.
+- Slash commands, shell commands (`!`/`!!`), and input from other extensions are ignored. Only interactive TUI mode is supported; print/JSON/RPC modes do not start reviews.
+- The model can make mistakes, especially without earlier context. Suggestions are never applied automatically.
+- Network failures, timeouts, and invalid JSON do not block Pi or produce fabricated corrections. Only a small status indicator appears; `/polyglot status` explains the issue. The next submission clears it.
+- **Reviews make additional provider requests**, consuming tokens or subscription quota. Keeping the main context clean does not make reviews free. The main chat's cost/token counter **does not include** these independent requests.
+- The extension does not save preferences, messages, or learning history. Provider-side storage and retention follow the provider's own policies. Existing authentication is managed by Pi.
 
-O código em `prototypes/` é descartável; não é base de produção. Antes da implementação real, arquivar o experimento numa branch de protótipo e implementar só o visual aprovado. Esse arquivamento ainda está pendente: este diretório não tem repositório Git nem issue de implementação.
+## Development and validation
 
-## Funcionamento aprovado — ainda não implementado
+```sh
+npm install --ignore-scripts
+npm run check
+```
 
-- Quando habilitado, revisar automaticamente após o envio da mensagem, nunca bloquear o envio ao agente de trabalho.
-- O Pi recebe o texto original intacto. A revisão roda em paralelo, numa sessão isolada e descartável por mensagem.
-- A revisão recebe apenas a mensagem e as preferências de idioma, não o histórico de trabalho.
-- Idioma-alvo inicial: **inglês**. As explicações devem ser dadas no **idioma nativo configurado**, não necessariamente no idioma estudado. Idioma-alvo e idioma nativo são preferências independentes; trocar o idioma estudado não muda o idioma das explicações.
-- Por padrão, cada revisão usa o **modelo ativo do Pi no momento do envio**. Trocar o modelo do Pi passa a valer para as próximas revisões.
-- Permitir configurar um **modelo específico para revisão**, independente do modelo de programação. Remover essa configuração volta a seguir o modelo ativo. Essa escolha não altera o modelo da sessão principal.
-- Usar o mesmo modelo não significa compartilhar a sessão ou seu contexto: a revisão continua isolada.
-- Mostrar o resultado somente no widget, sem acrescentar correções ao contexto principal.
-- Manter o feedback visível até o próximo envio, sem desaparecimento por tempo. No novo envio, limpar o feedback anterior; mostrar somente a revisão da mensagem mais recente, sem acumular histórico. Resultados atrasados de mensagens anteriores não devem reaparecer.
-- Quando não houver erros nem sugestões úteis, não mostrar feedback: nenhum aviso de “tudo certo” ou widget vazio. Remover também o resultado anterior para não exibir correções desatualizadas.
-- Desligar cancela a revisão e limpa a interface.
-- Incluir **correções de erros** e **sugestões para soar mais natural**. Distinguir as duas: uma preferência de estilo não deve ser apresentada como erro; sugestões de naturalidade são opcionais.
+This checks types and runs tests without real credentials. Tests cover:
 
-## Próximos baby steps — não implementados
+- synchronous input pass-through, isolation, and no access to the main session;
+- model selection, independent language preferences, and enabling/disabling;
+- cancellation, deadlines, reload/shutdown, and out-of-order results;
+- JSON validation, protected spans, repeated anchors, and diff normalization;
+- change counts, optional suggestions, and Unicode terminal-width limits;
+- English UI text and preservation of explanations in the configured native language;
+- the real `ModelRegistry` HTTP transport against a local server: the coding request finishes while the review is pending, with separate contexts.
 
-1. Definir limites de quantidade de feedback.
-2. Validar uma revisão real em contexto isolado e efêmero, sem ferramentas, histórico de trabalho, skills ou extensões herdadas. Idioma-alvo e idioma nativo configuráveis, com as explicações seguindo o idioma nativo.
-3. Conectar essa revisão ao envio normal em paralelo, conforme o funcionamento aprovado acima.
-4. Descartar resultados obsoletos e cancelar revisões também ao trocar idioma/sessão ou encerrar. Limitar latência, custo e quantidade de feedback.
+A live smoke check also reviewed a synthetic sentence in the TUI using `openai-codex/gpt-6-astra`, with explanations configured in Portuguese, without starting a coding-agent turn.
 
-As correções ficam na UI, nunca via `sendMessage`/`sendUserMessage` na sessão principal. Não usar `ctx.newSession()` para a revisão: isso substituiria a sessão de trabalho. O mecanismo da sessão isolada será validado no passo 2, antes de conectar um modelo.
+### Layout
+
+- `src/extension.ts`: Pi events, commands, and UI integration.
+- `src/review.ts`: isolated context, protected spans, edit validation and normalization.
+- `src/latest-review.ts`: deadlines, cancellation, and latest-result-only publication.
+- `src/view.ts`: single-sentence inline diff and bounded feedback panel.
+- `src/config.ts`: language and model selection.
+
+## Archived prototype
+
+The throwaway visual prototype and original decisions are preserved on the local **`prototype/visual`** branch, commit `74082e5`. The implementation was rewritten on `main`; the old variants are not loaded by the functional extension. The archive is a historical snapshot and retains its original language.
+
+```sh
+git show prototype/visual:prototypes/pi-polyglot-visual.ts
+```
+
+The selected design is C4: below the composer, an `English · N changes` header, removed text struck through, added text underlined, and a single marked-up sentence with explanations in the user's native language. No “polyglot · DEMO” label, duplicated before/after sentences, or automatic prompt rewriting.
+
+## Next steps
+
+Preference persistence, configurable limits, and teaching refinements can follow real-world use. This version does not keep learning history or assess proficiency levels.
