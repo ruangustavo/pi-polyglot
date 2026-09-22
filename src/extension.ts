@@ -14,6 +14,7 @@ export default function polyglot(pi: ExtensionAPI) {
 
   function clear(ctx: ExtensionContext) {
     runner.cancel();
+
     if (ctx.mode !== "tui") return;
     ctx.ui.setWidget(WIDGET, undefined);
     ctx.ui.setStatus(WIDGET, undefined);
@@ -22,17 +23,23 @@ export default function polyglot(pi: ExtensionAPI) {
   function start(text: string, ctx: ExtensionContext) {
     clear(ctx);
     const input = prepareInput(text);
+
     if (!input) {
       lastState = `Skipped: command, code, empty/unsafe input, or text over ${MAX_INPUT_CHARS} characters.`;
+
       return;
     }
+
     const override = preferences.model;
     const selected = override ? ctx.modelRegistry.find(override.provider, override.id) : ctx.model;
+
     if (!selected) {
       lastState = "Review model unavailable. Select one with /model or /polyglot model.";
       ctx.ui.setStatus(WIDGET, ctx.ui.theme.fg("warning", "polyglot: see /polyglot status"));
+
       return;
     }
+
     // Capture model and languages now; later /model changes affect only new messages.
     const model = { ...selected };
     const languages = { targetLanguage: preferences.targetLanguage, nativeLanguage: preferences.nativeLanguage };
@@ -41,6 +48,7 @@ export default function polyglot(pi: ExtensionAPI) {
       (signal) => reviewText(ctx.modelRegistry, model, languages, input, signal),
       (review) => {
         lastState = review.edits.length ? `${review.edits.length} ${review.edits.length === 1 ? "change" : "changes"} · ${model.provider}/${model.id}.` : "No useful changes.";
+
         if (review.edits.length === 0) return;
         ctx.ui.setWidget(WIDGET, (tui, theme) => ({
           render(width) {
@@ -59,6 +67,7 @@ export default function polyglot(pi: ExtensionAPI) {
   // Synchronous pass-through. Never await the model, rewrite input, or inject messages.
   pi.on("input", (event, ctx) => {
     if (ctx.mode === "tui" && enabled && event.source === "interactive") start(event.text, ctx);
+
     return { action: "continue" };
   });
   pi.on("user_bash", (_event, ctx) => {
@@ -77,43 +86,53 @@ export default function polyglot(pi: ExtensionAPI) {
   pi.registerCommand("polyglot", {
     description: "Isolated language feedback: on/off, lang, native, model, status",
     getArgumentCompletions(prefix) {
-      return completions.filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value }));
+      return completions.flatMap((value) => value.startsWith(prefix) ? [{ value, label: value }] : []);
     },
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") return;
       const trimmed = args.trim();
       const [action = "", ...rest] = trimmed.split(/\s+/u);
       const value = rest.join(" ");
+
       if ((action === "" || action === "on" || action === "off") && !value) {
         enabled = action === "" ? !enabled : action === "on";
         clear(ctx);
         lastState = enabled ? "Enabled; waiting for a message." : "Disabled.";
+
         if (enabled) ctx.ui.notify(`Polyglot on: ${languageName(preferences.targetLanguage)}; explanations in ${languageName(preferences.nativeLanguage)}. Each review uses an additional model call.`, "info");
+
         return;
       }
+
       if (action === "status" && !value) {
         const model = preferences.model ? `${preferences.model.provider}/${preferences.model.id}` : `Pi's active model (${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "none"})`;
         ctx.ui.notify(`${enabled ? "ON" : "OFF"} · ${languageName(preferences.targetLanguage)}\nNative language: ${languageName(preferences.nativeLanguage)}\nModel: ${model}\n${lastState}\nPreferences are in memory; /reload resets Polyglot to off.`, "info");
+
         return;
       }
+
       if (["lang", "native", "model"].includes(action) && value) {
         try {
           if (action === "model") {
             const model = parseModel(value);
+
             if (model && !ctx.modelRegistry.find(model.provider, model.id)) throw new Error("Model not found in Pi. Use provider/model-id or default.");
             preferences = { ...preferences, model };
           } else {
             const locale = parseLanguage(value);
             preferences = { ...preferences, [action === "lang" ? "targetLanguage" : "nativeLanguage"]: locale };
           }
+
           clear(ctx);
           lastState = "Preferences updated; waiting for the next message.";
           ctx.ui.notify("Preference updated. Use /polyglot status to view your settings.", "info");
         } catch (error) {
           ctx.ui.notify(error instanceof Error ? error.message : "Invalid configuration.", "warning");
         }
+
         return;
       }
+
       ctx.ui.notify(
         "Unknown command. Use /polyglot with on, off, status, lang, native, or model.",
         "warning",

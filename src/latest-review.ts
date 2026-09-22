@@ -34,10 +34,11 @@ export class LatestReview {
     // Defer even synchronous setup so the input hook returns immediately.
     void Promise.resolve().then(() => {
       controller.signal.throwIfAborted();
+
       return task(controller.signal);
     }).then((review) => {
       if (generation === this.generation && !controller.signal.aborted) onResult(review);
-    }).catch((error: unknown) => {
+    }).catch((error) => {
       if (generation !== this.generation || controller.signal.aborted) return;
       onError(error instanceof ReviewError ? error : new ReviewError("Could not complete the review."));
     }).finally(() => {

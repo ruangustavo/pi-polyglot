@@ -3,13 +3,18 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 export const MAX_INPUT_CHARS = 4_000;
+
 export const MAX_EDITS = 3;
+
 export const REVIEW_TIMEOUT_MS = 30_000;
+
 const MAX_RESPONSE_CHARS = 16_000;
+
 // Never render terminal commands, invisible bidi overrides, or model-supplied ANSI.
-const UNSAFE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\ud800-\udfff]/u;
+const UNSAFE = new RegExp(String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\ud800-\udfff]`, "u");
 
 export type Languages = { targetLanguage: string; nativeLanguage: string };
+
 export type Edit = {
   start: number;
   end: number;
@@ -18,8 +23,15 @@ export type Edit = {
   kind: "error" | "naturalness";
   explanation: string;
 };
+
 export type Review = { text: string; edits: Edit[] };
+
 export type ReviewInput = { text: string; masked: string; protectedRanges: { start: number; end: number }[] };
+
+type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
+
+type JsonObject = { [key: string]: JsonValue | undefined };
+
 export class ReviewError extends Error {}
 
 /** Limit both cost and scope. Protected text is not sent to the reviewer. */
@@ -27,6 +39,7 @@ export function prepareInput(text: string): ReviewInput | undefined {
   if (!text.trim() || text.length > MAX_INPUT_CHARS || UNSAFE.test(text) || /^[!/]/u.test(text.trimStart())) return;
   const protectedRanges: ReviewInput["protectedRanges"] = [];
   const characters = text.split("");
+
   const patterns = [
     /(^|\n)[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\2[^\n]*(?=\n|$)|$)/g,
     /(`+)[^\n]*?\1/g,
@@ -35,18 +48,23 @@ export function prepareInput(text: string): ReviewInput | undefined {
     /\b\w+_\w+\b|\b[a-z]+[A-Z]\w*\b/g,
     /^(?: {4}|\t).+$/gm,
   ];
+
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
       const start = match.index;
       const end = start + match[0].length;
       protectedRanges.push({ start, end });
+
       for (let index = start; index < end; index++) {
         if (characters[index] !== "\n" && characters[index] !== "\r") characters[index] = " ";
       }
     }
   }
+
   const masked = characters.join("");
+
   if (!/\p{L}/u.test(masked)) return;
+
   return { text, masked, protectedRanges };
 }
 
@@ -59,11 +77,16 @@ Return only JSON: {"edits":[{"original":"exact substring from text","replacement
 kind is "error" or "naturalness". Naturalness is an optional suggestion, not an assertion that the original is wrong.
 Return at most ${MAX_EDITS} high-value, non-overlapping edits; prioritize errors. Keep unchanged words out of each edit whenever possible. Each original is a nonempty exact substring, at most 240 characters. occurrence is the 1-based non-overlapping occurrence of original in text. To insert a missing word, include adjacent text as an anchor. replacement may be empty for a deletion, is at most 300 characters, and must differ from original. Each explanation is one short sentence, at most 220 characters, written in nativeLanguage. Do not repeat the original message or output a separate corrected sentence. If nothing useful needs changing, return {"edits":[]}.`;
 
-function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function object(value: JsonValue): value is JsonObject {
+  return value !== null && !Array.isArray(value) && value.constructor === Object;
 }
-function safeString(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length <= max && !UNSAFE.test(value);
+
+function safeString(value: JsonValue | undefined, max: number): value is string {
+  return value?.constructor === String && value.length <= max && !UNSAFE.test(value);
+}
+
+function safeInteger(value: JsonValue | undefined): value is number {
+  return value?.constructor === Number && Number.isInteger(value);
 }
 
 // Strip shared whole tokens, not arbitrary letters: preserve readable word-level diffs.
@@ -74,16 +97,20 @@ function minimalEdit(edit: Edit): Edit {
   const after = Array.from(segmenter.segment(edit.replacement), (part) => part.segment);
   let prefix = 0;
   let prefixChars = 0;
+
   while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
     prefixChars += before[prefix]!.length;
     prefix++;
   }
+
   let suffix = 0;
   let suffixChars = 0;
+
   while (suffix < before.length - prefix && suffix < after.length - prefix && before.at(-suffix - 1) === after.at(-suffix - 1)) {
     suffixChars += before.at(-suffix - 1)!.length;
     suffix++;
   }
+
   return {
     ...edit,
     start: edit.start + prefixChars,
@@ -96,38 +123,49 @@ function minimalEdit(edit: Edit): Edit {
 /** Exact anchors, no overlaps, no protected edits: fail closed on malformed output. */
 export function parseReview(raw: string, input: ReviewInput): Review {
   const invalid = () => new ReviewError("The model returned invalid edits. No corrections were displayed.");
+
   if (raw.length > MAX_RESPONSE_CHARS) throw invalid();
   const json = raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
-  let data: unknown;
+  let data: JsonValue;
+
   try { data = JSON.parse(json); } catch { throw invalid(); }
+
   if (!object(data) || !Array.isArray(data.edits) || data.edits.length > MAX_EDITS) throw invalid();
   const edits: Edit[] = [];
   const boundaries = new Set(Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(input.text), (part) => part.index));
   boundaries.add(input.text.length);
+
   for (const value of data.edits) {
     if (!object(value) || !safeString(value.original, 240) || !value.original.trim() ||
       !safeString(value.replacement, 300) || value.original === value.replacement ||
       !safeString(value.explanation, 220) || !value.explanation.trim() ||
       (value.kind !== "error" && value.kind !== "naturalness") ||
-      typeof value.occurrence !== "number" || !Number.isInteger(value.occurrence) ||
-      value.occurrence < 1 || value.occurrence > MAX_INPUT_CHARS) throw invalid();
+      !safeInteger(value.occurrence) || value.occurrence < 1 ||
+      value.occurrence > MAX_INPUT_CHARS) throw invalid();
 
     let start = -1;
     let cursor = 0;
+
     for (let index = 0; index < value.occurrence; index++) {
       start = input.masked.indexOf(value.original, cursor);
+
       if (start === -1) throw invalid();
       cursor = start + value.original.length;
     }
+
     const end = start + value.original.length;
+
     if (!boundaries.has(start) || !boundaries.has(end) || input.text.slice(start, end) !== value.original ||
       input.protectedRanges.some((range) => start < range.end && end > range.start)) throw invalid();
     edits.push(minimalEdit({ start, end, original: value.original, replacement: value.replacement,
       kind: value.kind, explanation: value.explanation.trim() }));
   }
+
   edits.sort((a, b) => a.start - b.start);
+
   if (edits.some((edit, index) => index > 0 &&
     (edit.start < edits[index - 1]!.end || edit.start === edits[index - 1]!.start))) throw invalid();
+
   return { text: input.text, edits };
 }
 
@@ -141,6 +179,7 @@ export async function reviewText(
 ): Promise<Review> {
   signal.throwIfAborted();
   let response;
+
   try {
     response = await registry.complete(model, {
       systemPrompt: REVIEW_SYSTEM_PROMPT,
@@ -163,10 +202,14 @@ export async function reviewText(
     signal.throwIfAborted();
     throw new ReviewError("Could not get a response from the review model. Check your model and login.");
   }
+
   signal.throwIfAborted();
+
   if (response.stopReason !== "stop" || response.content.some((part) => part.type === "toolCall")) {
     throw new ReviewError("The model did not complete a valid review. Try again.");
   }
+
   const raw = response.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+
   return parseReview(raw, input);
 }

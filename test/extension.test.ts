@@ -5,46 +5,81 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Extension
 import polyglot from "../src/extension.ts";
 import { deferred, fixtureJSON, flush, model, response, source, strictFake, theme } from "./helpers.ts";
 
+type HarnessEvent = {
+  type?: string;
+  text?: string;
+  source?: string;
+  images?: { data: string }[];
+};
+
+type HarnessEventResult = { action: "continue" } | void;
+
 function harness() {
   const events = new Map<string, unknown>();
   let command: Omit<RegisteredCommand, "name" | "sourceInfo"> | undefined;
+
   const api = strictFake<ExtensionAPI>({
     on: (name, handler) => { events.set(name, handler); },
     registerCommand: (name, options) => { assert.equal(name, "polyglot"); command = options; },
   });
+
   let widget: unknown;
   let status: string | undefined;
   const notifications: string[] = [];
   const jobs: { model: string; context: Context; options: ModelsApiStreamOptions<Api> | undefined; result: ReturnType<typeof deferred<AssistantMessage>> }[] = [];
+
   const registry = strictFake<ModelRegistry>({
     complete: async (selected, context, options) => {
       const result = deferred<AssistantMessage>();
       jobs.push({ model: selected.id, context, options, result });
+
       return result.promise;
     },
     find: (provider, id) => provider === "test" && id === "separate" ? { ...model, id } : undefined,
   });
+
   const ctx = strictFake<ExtensionCommandContext>({
     mode: "tui", hasUI: true, model, modelRegistry: registry,
     ui: strictFake<ExtensionUIContext>({
       theme,
-      setWidget: (_key, value, options) => { widget = value; if (value) assert.equal(options?.placement, "belowEditor"); },
+      setWidget: (_key, value, options) => {
+        widget = value;
+
+        if (value) assert.equal(options?.placement, "belowEditor");
+      },
       setStatus: (_key, value) => { status = value; },
       notify: (text) => { notifications.push(text); },
     }),
   });
+
   polyglot(api);
-  function event(name: string, value: object = {}) {
-    const handler = events.get(name) as ((event: object, ctx: ExtensionContext) => unknown) | undefined;
+
+  function event(name: string, value: HarnessEvent = {}): HarnessEventResult {
+    // SAFETY: handlers are stored under the same event names used to retrieve them in this harness.
+    const handler = events.get(name) as ((event: HarnessEvent, ctx: ExtensionContext) => HarnessEventResult) | undefined;
     assert.ok(handler, name);
+
     return handler(value, ctx);
   }
+
   return {
     ctx, jobs, notifications, event,
     input: (text = source, sourceKind = "interactive") => event("input", { type: "input", text, source: sourceKind }),
-    command: (args: string) => { assert.ok(command); return command.handler(args, ctx); },
-    completions: (prefix: string) => { assert.ok(command); return command.getArgumentCompletions?.(prefix); },
-    description: () => { assert.ok(command); return command.description; },
+    command: (args: string) => {
+      assert.ok(command);
+
+      return command.handler(args, ctx);
+    },
+    completions: (prefix: string) => {
+      assert.ok(command);
+
+      return command.getArgumentCompletions?.(prefix);
+    },
+    description: () => {
+      assert.ok(command);
+
+      return command.description;
+    },
     widget: () => widget, status: () => status,
   };
 }
@@ -61,9 +96,10 @@ test("disabled by default; input returns immediately unchanged; no forbidden pri
   assert.equal(JSON.parse(String(h.jobs[0]!.context.messages[0]!.content)).text, source);
   assert.equal(h.widget(), undefined);
   h.jobs[0]!.result.resolve(response(fixtureJSON)); await flush();
-  assert.equal(typeof h.widget(), "function");
+  assert.ok(h.widget() instanceof Function);
   h.event("session_shutdown");
 });
+
 test("UI defaults to English and stays English with a different explanation language", async () => {
   const h = harness(); h.event("session_start");
   assert.match(h.description()!, /Isolated language feedback/);
@@ -84,8 +120,10 @@ test("UI defaults to English and stays English with a different explanation lang
   assert.equal(request.targetLanguage, "en");
   h.event("session_shutdown");
 });
+
 test("configuration errors, missing models and skipped-input statuses use English", async () => {
   const h = harness();
+
   for (const [command, expected] of [
     ["lang not_a_locale", /Enter a valid language code/],
     ["model only-provider", /Use \/polyglot model default or/],
@@ -94,6 +132,7 @@ test("configuration errors, missing models and skipped-input statuses use Englis
     await h.command(command);
     assert.match(h.notifications.at(-1)!, expected);
   }
+
   await h.command("on");
   h.input("/skill:test"); await h.command("status");
   assert.match(h.notifications.at(-1)!, /Skipped: command/);
@@ -109,6 +148,7 @@ test("configuration errors, missing models and skipped-input statuses use Englis
   assert.match(h.notifications.at(-1)!, /Disabled/);
   h.event("session_shutdown");
 });
+
 test("new send clears old feedback; latest completion only; zero edits stays invisible", async () => {
   const h = harness(); await h.command("on"); h.input(); await flush();
   h.jobs[0]!.result.resolve(response(fixtureJSON)); await flush(); assert.ok(h.widget());
@@ -119,6 +159,7 @@ test("new send clears old feedback; latest completion only; zero edits stays inv
   assert.equal(h.widget(), undefined); assert.equal(h.status(), undefined);
   h.event("session_shutdown");
 });
+
 test("only interactive prose is reviewed; image data, commands and user shell aren't submitted", async () => {
   const h = harness(); await h.command("on");
   h.input(source, "extension"); h.input(source, "rpc"); h.input("/skill:test"); h.input("`code_only`");
@@ -128,9 +169,11 @@ test("only interactive prose is reviewed; image data, commands and user shell ar
   h.event("user_bash"); assert.equal(h.jobs[0]!.options?.signal?.aborted, true);
   h.event("session_shutdown");
 });
+
 test("language change, disable, tree navigation and shutdown cancel and forbid late UI changes", async () => {
   for (const action of ["off", "lang es", "native fr", "model test/separate", "tree", "shutdown"]) {
     const h = harness(); await h.command("on"); h.input(); await flush();
+
     if (action === "tree") h.event("session_tree");
     else if (action === "shutdown") h.event("session_shutdown");
     else await h.command(action);
@@ -140,6 +183,7 @@ test("language change, disable, tree navigation and shutdown cancel and forbid l
     h.event("session_shutdown");
   }
 });
+
 test("follows active model at submission; override is independent and default restores following", async () => {
   const h = harness(); await h.command("on");
   await h.command("native es"); await h.command("lang ja");
@@ -153,8 +197,10 @@ test("follows active model at submission; override is independent and default re
   await h.command("model default"); h.input(); await flush(); assert.equal(h.jobs[3]!.model, "changed-active");
   h.event("session_shutdown");
 });
+
 test("removed commands are unavailable, absent from autocomplete and never trigger reviews", async () => {
   const h = harness(); await h.command("on");
+
   for (const action of ["check " + source, "details", "help"]) {
     assert.deepEqual(h.completions(action.split(" ")[0]!), []);
     await h.command(action); await flush();
@@ -162,8 +208,10 @@ test("removed commands are unavailable, absent from autocomplete and never trigg
     assert.equal(h.jobs.length, 0);
     assert.equal(h.widget(), undefined);
   }
+
   h.event("session_shutdown");
 });
+
 test("malformed responses show a UI-only diagnostic, not a correction", async () => {
   const h = harness(); await h.command("on"); h.input(); await flush();
   assert.equal(h.jobs.length, 1);
@@ -172,8 +220,10 @@ test("malformed responses show a UI-only diagnostic, not a correction", async ()
   await h.command("status"); assert.match(h.notifications.at(-1)!, /invalid edits/);
   await h.command("off"); assert.equal(h.status(), undefined);
 });
+
 test("print/RPC/headless mode never reviews or installs TUI components", async () => {
   const h = harness();
+
   for (const mode of ["print", "json", "rpc"] as const) {
     h.ctx.mode = mode;
     await h.command("on"); h.input(); await flush();
