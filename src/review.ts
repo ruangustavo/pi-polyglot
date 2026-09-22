@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import * as z from "zod";
 
 export const MAX_INPUT_CHARS = 4_000;
 
@@ -28,11 +29,25 @@ export type Review = { text: string; edits: Edit[] };
 
 export type ReviewInput = { text: string; masked: string; protectedRanges: { start: number; end: number }[] };
 
-type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
-
-type JsonObject = { [key: string]: JsonValue | undefined };
-
 export class ReviewError extends Error {}
+
+const safeText = (maxLength: number) => z.string()
+  .max(maxLength)
+  .refine((value) => !UNSAFE.test(value));
+
+const reviewEditPayloadSchema = z.strictObject({
+  original: safeText(240).refine((value) => value.trim().length > 0),
+  replacement: safeText(300),
+  occurrence: z.number().int().min(1).max(MAX_INPUT_CHARS),
+  kind: z.enum(["error", "naturalness"]),
+  explanation: safeText(220).transform((value) => value.trim()).pipe(z.string().min(1)),
+}).refine(({ original, replacement }) => original !== replacement);
+
+const reviewPayloadSchema = z.strictObject({
+  edits: z.array(reviewEditPayloadSchema).max(MAX_EDITS),
+});
+
+type ReviewEditPayload = z.output<typeof reviewEditPayloadSchema>;
 
 /** Limit both cost and scope. Protected text is not sent to the reviewer. */
 export function prepareInput(text: string): ReviewInput | undefined {
@@ -77,16 +92,21 @@ Return only JSON: {"edits":[{"original":"exact substring from text","replacement
 kind is "error" or "naturalness". Naturalness is an optional suggestion, not an assertion that the original is wrong.
 Return at most ${MAX_EDITS} high-value, non-overlapping edits; prioritize errors. Keep unchanged words out of each edit whenever possible. Each original is a nonempty exact substring, at most 240 characters. occurrence is the 1-based non-overlapping occurrence of original in text. To insert a missing word, include adjacent text as an anchor. replacement may be empty for a deletion, is at most 300 characters, and must differ from original. Each explanation is one short sentence, at most 220 characters, written in nativeLanguage. Do not repeat the original message or output a separate corrected sentence. If nothing useful needs changing, return {"edits":[]}.`;
 
-function object(value: JsonValue): value is JsonObject {
-  return value !== null && !Array.isArray(value) && value.constructor === Object;
+function invalidReview(): ReviewError {
+  return new ReviewError("The model returned invalid edits. No corrections were displayed.");
 }
 
-function safeString(value: JsonValue | undefined, max: number): value is string {
-  return value?.constructor === String && value.length <= max && !UNSAFE.test(value);
-}
+function decodeReviewPayload(raw: string): ReviewEditPayload[] {
+  if (raw.length > MAX_RESPONSE_CHARS) throw invalidReview();
+  const json = raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
 
-function safeInteger(value: JsonValue | undefined): value is number {
-  return value?.constructor === Number && Number.isInteger(value);
+  try {
+    const value: unknown = JSON.parse(json);
+
+    return reviewPayloadSchema.parse(value).edits;
+  } catch {
+    throw invalidReview();
+  }
 }
 
 // Strip shared whole tokens, not arbitrary letters: preserve readable word-level diffs.
@@ -98,16 +118,22 @@ function minimalEdit(edit: Edit): Edit {
   let prefix = 0;
   let prefixChars = 0;
 
-  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
-    prefixChars += before[prefix]!.length;
+  while (prefix < before.length && prefix < after.length) {
+    const segment = before[prefix];
+
+    if (segment === undefined || segment !== after[prefix]) break;
+    prefixChars += segment.length;
     prefix++;
   }
 
   let suffix = 0;
   let suffixChars = 0;
 
-  while (suffix < before.length - prefix && suffix < after.length - prefix && before.at(-suffix - 1) === after.at(-suffix - 1)) {
-    suffixChars += before.at(-suffix - 1)!.length;
+  while (suffix < before.length - prefix && suffix < after.length - prefix) {
+    const segment = before.at(-suffix - 1);
+
+    if (segment === undefined || segment !== after.at(-suffix - 1)) break;
+    suffixChars += segment.length;
     suffix++;
   }
 
@@ -122,49 +148,37 @@ function minimalEdit(edit: Edit): Edit {
 
 /** Exact anchors, no overlaps, no protected edits: fail closed on malformed output. */
 export function parseReview(raw: string, input: ReviewInput): Review {
-  const invalid = () => new ReviewError("The model returned invalid edits. No corrections were displayed.");
-
-  if (raw.length > MAX_RESPONSE_CHARS) throw invalid();
-  const json = raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
-  let data: JsonValue;
-
-  try { data = JSON.parse(json); } catch { throw invalid(); }
-
-  if (!object(data) || !Array.isArray(data.edits) || data.edits.length > MAX_EDITS) throw invalid();
+  const candidates = decodeReviewPayload(raw);
   const edits: Edit[] = [];
   const boundaries = new Set(Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(input.text), (part) => part.index));
   boundaries.add(input.text.length);
 
-  for (const value of data.edits) {
-    if (!object(value) || !safeString(value.original, 240) || !value.original.trim() ||
-      !safeString(value.replacement, 300) || value.original === value.replacement ||
-      !safeString(value.explanation, 220) || !value.explanation.trim() ||
-      (value.kind !== "error" && value.kind !== "naturalness") ||
-      !safeInteger(value.occurrence) || value.occurrence < 1 ||
-      value.occurrence > MAX_INPUT_CHARS) throw invalid();
-
+  for (const value of candidates) {
     let start = -1;
     let cursor = 0;
 
     for (let index = 0; index < value.occurrence; index++) {
       start = input.masked.indexOf(value.original, cursor);
 
-      if (start === -1) throw invalid();
+      if (start === -1) throw invalidReview();
       cursor = start + value.original.length;
     }
 
     const end = start + value.original.length;
 
     if (!boundaries.has(start) || !boundaries.has(end) || input.text.slice(start, end) !== value.original ||
-      input.protectedRanges.some((range) => start < range.end && end > range.start)) throw invalid();
+      input.protectedRanges.some((range) => start < range.end && end > range.start)) throw invalidReview();
     edits.push(minimalEdit({ start, end, original: value.original, replacement: value.replacement,
-      kind: value.kind, explanation: value.explanation.trim() }));
+      kind: value.kind, explanation: value.explanation }));
   }
 
   edits.sort((a, b) => a.start - b.start);
+  let previous: Edit | undefined;
 
-  if (edits.some((edit, index) => index > 0 &&
-    (edit.start < edits[index - 1]!.end || edit.start === edits[index - 1]!.start))) throw invalid();
+  for (const edit of edits) {
+    if (previous && (edit.start < previous.end || edit.start === previous.start)) throw invalidReview();
+    previous = edit;
+  }
 
   return { text: input.text, edits };
 }

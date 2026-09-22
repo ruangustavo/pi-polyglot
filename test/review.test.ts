@@ -35,6 +35,7 @@ test("exact edits and explanations, not a full rewritten message", () => {
   assert.deepEqual(result.edits, [{ start: 12, end: 17, original: "have ", replacement: "", kind: "error", explanation: fixture.explanation }]);
   assert.deepEqual(parseReview('{"edits":[]}', input()).edits, []);
   assert.equal(parseReview('```json\n' + fixtureJSON + '\n```', input()).edits.length, 1);
+  assert.equal(parseReview(JSON.stringify({ edits: [{ ...fixture, explanation: `  ${fixture.explanation}  ` }] }), input()).edits[0]?.explanation, fixture.explanation);
 });
 
 test("repeated anchors, insertion anchors and deletions", () => {
@@ -59,12 +60,14 @@ test("broad model anchors do not duplicate unchanged words; whole words stay rea
 
 test("fails closed for malformed, overlapping, unsafe, missing and protected edits", () => {
   const invalid = ["garbage", "null", "{}", '{"edits":{}}',
+    JSON.stringify({ edits: [], unexpected: true }),
     ...[
-      { ...fixture, original: "absent" }, { ...fixture, original: "" },
+      { ...fixture, unexpected: true }, { ...fixture, original: "absent" }, { ...fixture, original: "" },
       { ...fixture, replacement: fixture.original }, { ...fixture, replacement: "\x1b[2J" },
       { ...fixture, explanation: "\u202ehidden" }, { ...fixture, kind: "other" },
       { ...fixture, occurrence: 0 }, { ...fixture, occurrence: 1.2 },
-      { ...fixture, occurrence: 999999999 }, { ...fixture, explanation: "x".repeat(221) },
+      { ...fixture, occurrence: 999999999 }, { ...fixture, original: "x".repeat(241) },
+      { ...fixture, replacement: "x".repeat(301) }, { ...fixture, explanation: "x".repeat(221) },
     ].map((edit) => JSON.stringify({ edits: [edit] })),
     JSON.stringify({ edits: [fixture, fixture] }), JSON.stringify({ edits: Array(4).fill(fixture) })];
 
